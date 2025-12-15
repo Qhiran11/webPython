@@ -1,102 +1,92 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import time
+from streamlit_autorefresh import st_autorefresh # <-- Import baru
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="Smart IoT Dashboard",
-    page_icon="⚡",
+    page_title="IoT Monitoring Dashboard",
+    page_icon="🤖",
     layout="wide"
 )
 
-# --- CSS AGAR TAMPILAN LEBIH BERSIH ---
-st.markdown("""
-<style>
-    .block-container {padding-top: 1rem;}
-</style>
-""", unsafe_allow_html=True)
-
 # --- FUNGSI LOAD DATA ---
 def get_data():
-    # GANTI LINK CSV ANDA DI SINI
+    # GANTI LINK INI DENGAN LINK CSV ANDA DARI LANGKAH 1
     sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSiOyd7cKc7lXbJlYl7A7JIaOHlhDyhVQghGjNGbbHZxI9TTi7pnwr7edIeXdrrhp60vBcky5BZ3Ojq/pub?gid=0&single=true&output=csv"
     
     try:
-        # Tambahkan parameter on_bad_lines agar tidak error jika ada data korup
+        # Membaca CSV langsung dari URL
         df = pd.read_csv(sheet_url)
+        
+        # Bersihkan nama kolom (hapus spasi di awal/akhir)
         df.columns = df.columns.str.strip()
+        
+        # Konversi kolom 'Waktu' ke format datetime agar bisa diurutkan
         df['Waktu'] = pd.to_datetime(df['Waktu'])
+        
+        # Urutkan berdasarkan waktu (data terbaru di paling bawah/atas tergantung selera)
         df = df.sort_values(by='Waktu')
         return df
     except Exception as e:
+        st.error(f"Gagal mengambil data: {e}")
         return None
 
-# --- STATE MANAGEMENT (INGATAN PYTHON) ---
-# Kita butuh variabel untuk menyimpan waktu data terakhir
-if 'last_check_time' not in st.session_state:
-    st.session_state['last_check_time'] = None
+# --- JUDUL DASHBOARD ---
+st.title("🎛️ Real-time Sensor Dashboard")
+st.markdown("Monitoring data sensor dari Google Sheets secara real-time")
 
-# --- LAYOUT UTAMA ---
-st.title("⚡ Real-time Smart Dashboard")
-st.caption("Dashboard hanya akan refresh visual jika ada data baru masuk.")
+# --- AUTO REFRESH LOGIC ---
+# Checkbox untuk mengaktifkan update otomatis
+count = st_autorefresh(interval=5000, limit=None, key="mysensor")
 
-# Buat wadah kosong (Placeholder) yang akan kita isi ulang terus menerus
-dashboard_placeholder = st.empty()
+# --- TAMPILKAN DATA ---
+df = get_data()
 
-# --- LOOPING UTAMA (PENGGANTI AUTO REFRESH BIASA) ---
-while True:
-    # 1. Ambil data diam-diam
-    df = get_data()
+if df is not None and not df.empty:
+    # Ambil data baris terakhir (data sensor paling baru)
+    latest_data = df.iloc[-1]
+
+    # --- BAGIAN 1: KARTU METRIK (Indikator Utama) ---
+    st.markdown("### 📡 Status Terkini")
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric(label="🌡️ Suhu Rumah", value=f"{latest_data['suhu rumah']} °C")
     
-    if df is not None and not df.empty:
-        # Ambil waktu dari data paling baru (baris terakhir)
-        latest_data_time = df.iloc[-1]['Waktu']
-        
-        # 2. LOGIKA CEK PERUBAHAN
-        # Jika waktu data terbaru BEDA dengan yang kita ingat -> Update Tampilan
-        if latest_data_time != st.session_state['last_check_time']:
-            
-            # Update ingatan kita
-            st.session_state['last_check_time'] = latest_data_time
-            
-            # --- RENDER TAMPILAN DI DALAM PLACEHOLDER ---
-            with dashboard_placeholder.container():
-                latest_data = df.iloc[-1]
-                
-                # --- STATUS UPDATE ---
-                st.success(f"Data Baru Diterima! Update terakhir: {latest_data_time.strftime('%H:%M:%S')}")
+    with col2:
+        # Logika Rain Module: 0 biasanya tidak hujan, >0 hujan (sesuaikan dengan sensor Anda)
+        status_hujan = "Hujan! 🌧️" if latest_data['Rain Module'] < 500 else "Cerah ☀️" 
+        # *Catatan: Nilai sensor hujan analog biasanya terbalik (makin kecil makin basah) atau sebaliknya, sesuaikan logika if-nya.
+        st.metric(label="🌧️ Sensor Hujan", value=latest_data['Rain Module'], delta=status_hujan)
 
-                # --- METRICS ---
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("🌡️ Suhu", f"{latest_data['suhu rumah']} °C")
-                
-                delta_hujan = "Basah" if latest_data['Rain Module'] < 500 else "Kering"
-                col2.metric("🌧️ Hujan", latest_data['Rain Module'], delta=delta_hujan)
-                
-                col3.metric("💡 Cahaya", latest_data['LDR'])
-                col4.metric("🆔 RFID", latest_data['RFID'])
-                
-                st.markdown("---")
+    with col3:
+        st.metric(label="💡 Cahaya (LDR)", value=f"{latest_data['LDR']}")
 
-                # --- GRAFIK ---
-                c_kiri, c_kanan = st.columns(2)
-                
-                with c_kiri:
-                    fig_temp = px.line(df.tail(20), x='Waktu', y='suhu rumah', title='20 Data Terakhir: Suhu', markers=True)
-                    st.plotly_chart(fig_temp, use_container_width=True)
-                
-                with c_kanan:
-                    fig_ldr = px.area(df.tail(20), x='Waktu', y='LDR', title='20 Data Terakhir: Cahaya', color_discrete_sequence=['gold'])
-                    st.plotly_chart(fig_ldr, use_container_width=True)
+    with col4:
+        st.metric(label="🆔 RFID Terakhir", value=f"{latest_data['RFID']}")
 
-        else:
-            # JIKA DATA SAMA (Tidak ada perubahan)
-            # Kita tidak melakukan update visual apa-apa
-            # Tapi kita bisa kasih indikator kecil (opsional)
-            pass 
-            
-    # 3. JEDA PENGECEKAN
-    # Tunggu 3 detik sebelum mengecek ke Google Sheet lagi
-    # Ini penting agar tidak terkena limit Google (Error 429)
-    time.sleep(3)
+    st.markdown("---")
+
+    # --- BAGIAN 2: GRAFIK VISUALISASI ---
+    col_kiri, col_kanan = st.columns(2)
+
+    with col_kiri:
+        st.subheader("Grafik Suhu Rumah")
+        # Menggunakan Plotly untuk grafik interaktif
+        fig_temp = px.line(df, x='Waktu', y='suhu rumah', markers=True, title='Riwayat Suhu')
+        fig_temp.update_layout(height=350)
+        st.plotly_chart(fig_temp, use_container_width=True)
+
+    with col_kanan:
+        st.subheader("Grafik Cahaya (LDR)")
+        fig_ldr = px.area(df, x='Waktu', y='LDR', color_discrete_sequence=['orange'], title='Intensitas Cahaya')
+        fig_ldr.update_layout(height=350)
+        st.plotly_chart(fig_ldr, use_container_width=True)
+
+    # --- BAGIAN 3: TABEL DATA MENTAH ---
+    with st.expander("Lihat Data Mentah (Tabel)"):
+        st.dataframe(df.sort_values(by='Waktu', ascending=False)) # Tampilkan yang terbaru di atas
+
+else:
+    st.warning("Menunggu data masuk...")
