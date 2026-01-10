@@ -1,5 +1,3 @@
-# git untuk tambah remote : git remote add origin
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
